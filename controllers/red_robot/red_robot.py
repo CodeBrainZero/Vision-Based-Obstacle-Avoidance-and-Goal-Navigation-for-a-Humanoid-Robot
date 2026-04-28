@@ -6,57 +6,79 @@ timestep = int(robot.getBasicTimeStep())
 name = robot.getName()
 print(f"✅ {name} is online!")
 
-#  Walking animation (
+# Walking animation
 motions_dir = r'C:\Program Files\Webots\projects\robots\softbank\nao\motions'
 forwards = Motion(os.path.join(motions_dir, 'Forwards50.motion'))
 forwards.setLoop(True)
 forwards.play()
 
-#  Sonar sensors 
 sonar_left  = robot.getDevice('Sonar/Left')
 sonar_right = robot.getDevice('Sonar/Right')
 sonar_left.enable(timestep)
 sonar_right.enable(timestep)
 
-#  Get red robot's own position in the world 
 self_node   = robot.getSelf()
 trans_field = self_node.getField('translation')
 rot_field   = self_node.getField('rotation')
 
-#  Movement settings 
-direction   = random.uniform(0, 2 * math.pi)  # random starting direction
-SPEED       = 0.015    # metres moved per timestep
-ARENA_LIMIT = 1.7      # half the arena size (arena is 4x4, so limit is 1.8)
-SONAR_LIMIT = 0.8      # turn if sonar sees something within 0.8m
+# Get green goal position so they can avoid walking through it 
+goal_node        = robot.getFromDef('green_goal')
+goal_trans_field = goal_node.getField('translation')
+
+# Avoiding obstacle too 
+obstacle_nodes = []
+for obs_name in ['obstacle_1', 'obstacle_2', 'obstacle_3']:
+    node = robot.getFromDef(obs_name)
+    if node is not None:
+        obstacle_nodes.append(node)
+
+# Movement settings 
+direction   = random.uniform(0, 2 * math.pi)
+SPEED       = 0.015
+ARENA_LIMIT = 1.7
+SONAR_LIMIT = 0.8
+GOAL_RADIUS = 0.35    # how close before red robot bounces off green ball
+OBS_RADIUS  = 0.25    # how close before red robot bounces off red boxes
 
 print(f"✅ {name} walking!")
 
+# Collision check function 
+def would_collide(nx, ny):
+    # Check green ball
+    gx, gy, gz = goal_trans_field.getSFVec3f()
+    if math.sqrt((nx - gx)**2 + (ny - gy)**2) < GOAL_RADIUS:
+        return True
+    # Check red boxes
+    for obs in obstacle_nodes:
+        ox, oy, oz = obs.getField('translation').getSFVec3f()
+        if math.sqrt((nx - ox)**2 + (ny - oy)**2) < OBS_RADIUS:
+            return True
+    return False
+
 while robot.step(timestep) != -1:
 
-    # Read current position
-    x, y, z = trans_field.getSFVec3f()
-
-    # Read sonar
+    x, y, z    = trans_field.getSFVec3f()
     dist_left  = sonar_left.getValue()
     dist_right = sonar_right.getValue()
 
-    # Check if near a wall or obstacle
     near_wall     = abs(x) > ARENA_LIMIT or abs(y) > ARENA_LIMIT
     near_obstacle = dist_left < SONAR_LIMIT or dist_right < SONAR_LIMIT
 
     if near_wall or near_obstacle:
-        # Flip direction amd add some randomness so it doesn't get stuck
         direction = (direction + math.pi + random.uniform(-0.6, 0.6)) % (2 * math.pi)
 
-    # Calculate new position
     new_x = x + SPEED * math.cos(direction)
     new_y = y + SPEED * math.sin(direction)
+    
+    #  bounce off green ball and red boxes 
+    if would_collide(new_x, new_y):
+        direction = (direction + math.pi + random.uniform(-0.4, 0.4)) % (2 * math.pi)
+        new_x = x
+        new_y = y
 
-    # Hard clamp, the robot can never escape the arena
     new_x = max(-ARENA_LIMIT, min(ARENA_LIMIT, new_x))
     new_y = max(-ARENA_LIMIT, min(ARENA_LIMIT, new_y))
 
-    # Apply position and rotation directly making sure they don't fight physics
     trans_field.setSFVec3f([new_x, new_y, z])
     rot_field.setSFRotation([0, 0, 1, direction])
     self_node.resetPhysics()
